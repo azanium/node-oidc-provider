@@ -263,6 +263,7 @@ describe('resume after interaction', () => {
           account: uuid(),
           remember: true,
         },
+        consent: {},
       });
 
       return this.agent.get('/auth/resume')
@@ -287,6 +288,7 @@ describe('resume after interaction', () => {
         login: {
           account: uuid(),
         },
+        consent: {},
       });
 
       return this.agent.get('/auth/resume')
@@ -354,6 +356,31 @@ describe('resume after interaction', () => {
         .expect(auth.validateClientLocation)
         .expect(auth.validateError('consent_required'))
         .expect(auth.validateErrorDescription('prompt consent was not resolved'));
+    });
+
+    describe('custom interaction errors', () => {
+      it('custom interactions can fail too', function () {
+        const auth = new this.AuthorizationRequest({
+          response_type: 'code',
+          scope: 'openid',
+          custom: 'foo',
+        });
+
+        setup.call(this, auth, {
+          login: {
+            account: uuid(),
+            remember: true,
+          },
+          consent: {},
+        });
+
+        return this.agent.get('/auth/resume')
+          .expect(302)
+          .expect(auth.validateState)
+          .expect(auth.validateClientLocation)
+          .expect(auth.validateError('error_foo'))
+          .expect(auth.validateErrorDescription('error_description_foo'));
+      });
     });
 
     describe('rejectedScopes', () => {
@@ -635,6 +662,24 @@ describe('resume after interaction', () => {
         .expect(auth.validateState)
         .expect(auth.validateError('access_denied'))
         .expect(auth.validateErrorDescription('scope out of reach'));
+    });
+
+    it('should abort an interaction when given an error result object (custom error)', function () {
+      const auth = new this.AuthorizationRequest({
+        response_type: 'code',
+        scope: 'openid',
+      });
+
+      setup.call(this, auth, {
+        error: 'custom_foo',
+        error_description: 'custom_foobar',
+      });
+
+      return this.agent.get('/auth/resume')
+        .expect(302)
+        .expect(auth.validateState)
+        .expect(auth.validateError('custom_foo'))
+        .expect(auth.validateErrorDescription('custom_foobar'));
     });
   });
 

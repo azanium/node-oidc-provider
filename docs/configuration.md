@@ -34,6 +34,7 @@ is a good starting point to get an idea of what you should provide.
 - [Configuration options](#configuration-options)
   - [features](#features)
   - [features.backchannelLogout](#featuresbackchannellogout)
+  - [features.certificateBoundAccessTokens](#featurescertificateboundaccesstokens)
   - [features.claimsParameter](#featuresclaimsparameter)
   - [features.clientCredentials](#featuresclientcredentials)
   - [features.devInteractions](#featuresdevinteractions)
@@ -50,6 +51,7 @@ is a good starting point to get an idea of what you should provide.
   - [features.registrationManagement](#featuresregistrationmanagement)
   - [features.request](#featuresrequest)
   - [features.requestUri](#featuresrequesturi)
+  - [features.resourceIndicators](#featuresresourceindicators)
   - [features.revocation](#featuresrevocation)
   - [features.sessionManagement](#featuressessionmanagement)
   - [features.webMessageResponseMode](#featureswebmessageresponsemode)
@@ -513,14 +515,13 @@ const oidc = new Provider('http://localhost:3000', {
 
 
 ## Fine-tuning supported algorithms
-The lists of supported algorithms exposed via discovery and used when validating request objects and
-client metadata is a union of
-
-- all symmetrical algorithms where they apply
-- algorithms from the keystore you initialize the provider with
-
-If you wish to tune the algorithms further you may do so via the `unsupported` [configuration][defaults]
+The supported JWA algorithms are configured with the [whitelistedJWA](#whitelistedjwa) configuration
 property.
+
+- whitelisted symmetric algorithms are available all the time
+- whitelisted asymmetric algorithms are available when the provider is initialized with keystore
+  including keys that support those JWAs
+
 
 ## HTTP Request Library / Proxy settings
 By default oidc-provider uses the [got][got-library] module. Because of its lightweight nature of
@@ -742,6 +743,7 @@ Enable/disable features.
   jwtResponseModes: false,
   registration: false,
   registrationManagement: false,
+  resourceIndicators: false,
   request: false,
   revocation: false,
   sessionManagement: false,
@@ -766,7 +768,7 @@ false
 
 ### features.certificateBoundAccessTokens
 
-[draft-ietf-oauth-mtls-11](https://tools.ietf.org/html/draft-ietf-oauth-mtls-11) - OAuth 2.0 Mutual TLS Client Authentication and Certificate Bound Access Tokens  
+[draft-ietf-oauth-mtls-12](https://tools.ietf.org/html/draft-ietf-oauth-mtls-12) - OAuth 2.0 Mutual TLS Client Authentication and Certificate Bound Access Tokens  
 
 Enables Certificate Bound Access Tokens. Clients may be registered with `tls_client_certificate_bound_access_tokens` to indicate intention to receive mutual TLS client certificate bound access tokens.   
   
@@ -1045,6 +1047,50 @@ Configure `features.registration` to be an object like so:
 new (provider.InitialAccessToken)({}).save().then(console.log);
 ```
 </details>
+<details>
+  <summary>(Click to expand) To define registration and registration management policies</summary>
+  <br>
+
+
+Policies are sync/async functions that are assigned to an Initial Access Token that run before the regular client property validations are run. Multiple policies may be assigned to an Initial Access Token and by default the same policies will transfer over to the Registration Access Token. A policy may throw / reject and it may modify the properties object. To define policy functions configure `features.registration` to be an object like so:
+  
+
+```js
+{
+  initialAccessToken: true, // to enable adapter-backed initial access tokens
+  policies: {
+    'my-policy': function (ctx, properties) {
+      // @param ctx - koa request context
+      // @param properties - the client properties which are about to be validated
+      // example of setting a default
+      if (!('client_name' in properties)) {
+        properties.client_name = generateRandomClientName();
+      }
+      // example of forcing a value
+      properties.userinfo_signed_response_alg = 'RS256';
+      // example of throwing a validation error
+      if (someCondition(ctx, properties)) {
+        throw new Provider.errors.InvalidClientMetadata('validation error message');
+      }
+    },
+    'my-policy-2': async function (ctx, properties) {},
+  },
+}
+```
+An Initial Access Token with those policies being executed (one by one in that order) is created like so
+  
+
+```js
+new (provider.InitialAccessToken)({ policies: ['my-policy', 'my-policy-2'] }).save().then(console.log);
+```
+Note: referenced policies must always be present when encountered on a token, an AssertionError will be thrown inside the request context if it's not, resulting in a 500 Server Error. Note: the same policies will be assigned to the Registration Access Token after a successful validation. If you wish to assign different policies to the Registration Access Token
+  
+
+```js
+// inside your final ran policy
+ctx.oidc.entities.RegistrationAccessToken.policies = ['update-policy'];
+```
+</details>
 
 ### features.registrationManagement
 
@@ -1111,6 +1157,75 @@ Configure `features.requestUri` with an object like so instead of a Boolean valu
 ```
 </details>
 
+### features.resourceIndicators
+
+[draft-ietf-oauth-resource-indicators-01](https://tools.ietf.org/html/draft-ietf-oauth-resource-indicators-01) - Resource Indicators for OAuth 2.0  
+
+Enables the use of `resource` parameter for the authorization and token endpoints. In order for the feature to be any useful you must also use the `audiences` helper function to validate the resource(s) and transform it to jwt's token audience.   
+  
+
+
+_**default value**_:
+```js
+false
+```
+<details>
+  <summary>(Click to expand) Example use</summary>
+  <br>
+
+
+This example will
+ - throw based on an OP policy when unrecognized or unauthorized resources are requested
+ - transform resources to audience and push them down to the audience of access tokens
+ - take both, the parameter and previously granted resources into consideration
+  
+
+```js
+// const { InvalidTarget } = Provider.errors;
+// `resourceAllowedForClient` is the custom OP policy
+// `transform` is mapping the resource values to actual aud values
+{
+  // ...
+  async function audiences(ctx, sub, token, use) {
+    if (use === 'access_token') {
+      const { oidc: { route, client, params: { resource: resourceParam } } } = ctx;
+      let grantedResource;
+      if (route === 'token') {
+        const { oidc: { params: { grant_type } } } = ctx;
+        switch (grant_type) {
+          case 'authorization_code':
+            grantedResource = ctx.oidc.entities.AuthorizationCode.resource;
+            break;
+          case 'refresh_token':
+            grantedResource = ctx.oidc.entities.RefreshToken.resource;
+            break;
+          case 'urn:ietf:params:oauth:grant-type:device_code':
+            grantedResource = ctx.oidc.entities.DeviceCode.resource;
+            break;
+          default:
+        }
+      }
+      const allowed = await resourceAllowedForClient(resourceParam, grantedResource, client);
+      if (!allowed) {
+        throw new InvalidResource('unauthorized "resource" requested');
+      }
+      return transform(resourceParam, grantedResource); // => array of validated and transformed string audiences
+    }
+  },
+  formats: {
+    default: 'opaque',
+    AccessToken(token) {
+      if (Array.isArray(token.aud)) {
+        return 'jwt';
+      }
+      return 'opaque';
+    }
+  },
+  // ...
+}
+```
+</details>
+
 ### features.revocation
 
 [RFC7009](https://tools.ietf.org/html/rfc7009) - OAuth 2.0 Token Revocation  
@@ -1141,7 +1256,7 @@ false
   <br>
 
 
-The User-Agent must allow access to the provider cookies from a third-party context when the OP frame is embedded. Oidc-provider checks if this is enabled using a [CDN hosted](https://rawgit.com/) [iframe][third-party-cookies-git]. It is recommended to host these helper pages on your own (on a different domain from the one you host oidc-provider on). Once hosted, set the `features.sessionManagement.thirdPartyCheckUrl` to an absolute URL for the start page. See [this][third-party-cookies-so] for more info. Note: This is still just a best-effort solution and is in no way bulletproof. Currently there's no better way to check if access to third party cookies has been blocked or the cookies are just missing. (Safari's ITP 2.0 Storage Access API also cannot be used) Configure `features.sessionManagement` as an object like so:
+The User-Agent must allow access to the provider cookies from a third-party context when the OP frame is embedded. Oidc-provider can check if third-party cookie access is enabled using a CDN hosted [iframe][third-party-cookies-git]. It is recommended to host these helper pages on your own (on a different domain from the one you host oidc-provider on). Once hosted, set the `features.sessionManagement.thirdPartyCheckUrl` to an absolute URL for the start page. See [this][third-party-cookies-so] for more info. Note: This is still just a best-effort solution and is in no way bulletproof. Currently there's no better way to check if access to third party cookies has been blocked or the cookies are just missing. (Safari's ITP 2.0 Storage Access API also cannot be used) Configure `features.sessionManagement` as an object like so:
   
 
 ```js
@@ -1184,6 +1299,21 @@ _**default value**_:
 ```js
 []
 ```
+<details>
+  <summary>(Click to expand) FAQ: return acr/amr from session</summary>
+  <br>
+
+
+To return the acr and/or amr from the established session rather then values from a this given authorization request overload the OIDCContext.
+  
+
+```js
+Object.defineProperties(provider.OIDCContext.prototype, {
+  acr: { get() { return this.session.acr; } },
+  amr: { get() { return this.session.amr; } },
+});
+```
+</details>
 
 ### audiences
 
@@ -1587,7 +1717,12 @@ ${frames.join('')}
 
 ### interactionCheck
 
-Helper used by the OP as a final check whether the End-User should be sent to interaction or not, the default behavior is that every RP must be authorized per session and that native application clients always require End-User prompt to be confirmed. Return false if no interaction should be performed, return an object with relevant error, reason, etc. When interaction should be requested  
+Helper used by the OP as a final check whether the End-User should be sent to interaction or not. Return false if no interaction should be performed, return an object with relevant error, reason, etc. When interaction should be requested.   
+ The default BCP behavior that is implemented, one that you SHOULD carry over to your own function should you choose to overwrite it, is that   
+ - every client requires interaction the first time it's encountered in a session
+ - native clients always require End-User prompt
+ - consent is required every time when scopes or claims weren't accepted by the end-user yet   
+  
 
 _**affects**_: authorization interactions  
 <details>
@@ -1639,6 +1774,20 @@ async interactionCheck(ctx) {
 
 </details>
 
+<details>
+  <summary>(Click to expand) when bypassing the BCP checks put forth by the default implementation</summary>
+  <br>
+
+
+You will have to do some of the actions an interaction resume would do automatically upon interaction success yourself, you would do these inside the interactionCheck helper.
+ - `ctx.oidc.session.sidFor(ctx.oidc.client.clientId, randomValue);`
+ - `ctx.oidc.session.rejectedClaimsFor(ctx.oidc.client.clientId, rejectedClaims);`
+ - `ctx.oidc.session.rejectedScopesFor(ctx.oidc.client.clientId, rejectedScopes);`
+ - `ctx.oidc.session.promptedScopesFor(ctx.oidc.client.clientId, ctx.oidc.requestParamScopes);`
+ - `ctx.oidc.session.promptedClaimsFor(ctx.oidc.client.clientId, ctx.oidc.requestParamClaims);`  
+
+
+</details>
 
 ### interactionUrl
 
@@ -1828,6 +1977,23 @@ _**affects**_: authorization, discovery, registration, registration management
 
 </details>
 
+<details>
+  <summary>(Click to expand) Supported values list</summary>
+  <br>
+
+
+These are values defined in [Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html#Authentication) and [OAuth 2.0 Multiple Response Type Encoding Practices](https://openid.net/specs/oauth-v2-multiple-response-types-1_0.html)
+  
+
+```js
+[
+  'code',
+  'id_token', 'id_token token',
+  'code id_token', 'code token', 'code id_token token',
+  'none',
+]
+```
+</details>
 
 ### revocationEndpointAuthMethods
 
