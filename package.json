@@ -22,10 +22,10 @@
     "provider",
     "server"
   ],
-  "homepage": "https://github.com/panva/node-oidc-provider",
-  "repository": "panva/node-oidc-provider",
+  "homepage": "https://github.com/azanium/node-oidc-provider",
+  "repository": "azanium/node-oidc-provider",
   "license": "MIT",
-  "author": "Filip Skokan <panva.ip@gmail.com>",
+  "author": "Filip Skokan <panva.ip@gmail.com>, Suhendra Ahmad <syuaibi@gmail.com>",
   "files": [
     "lib"
   ],
