@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file. See [standa
 ## [5.5.1](https://github.com/panva/node-oidc-provider/compare/v5.5.0...v5.5.1) (2018-11-26)
 
 
+### Client Credentials Permissions
+
+* added custom claims for permissions
+
+
 ### Bug Fixes
 
 * added aud and azp validations for ID Tokens passed by clients ([4df8160](https://github.com/panva/node-oidc-provider/commit/4df8160))
